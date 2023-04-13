@@ -265,6 +265,302 @@ func expandWithIPs(ctx context.Context, lookupFn LookupFunc, fallbacks []*Fallba
 	return configs, nil
 }
 
+// ConnectPassthrough connects directly to a user assuming the clientConn will pass
+// all the correct connection strings.
+func ConnectPassthrough(
+	ctx context.Context,
+	config *Config,
+	serverTLSConfig *tls.Config,
+	clientConn net.Conn,
+) (pgConn *PgConn, retConn net.Conn, err error) {
+	// TODO(#migrations): fallback configs?
+	pgConn, clientConn, err = connectPassthrough(ctx, config, serverTLSConfig, clientConn)
+	if pgerr, ok := err.(*PgError); ok {
+		err = &connectError{config: config, msg: "server error", err: pgerr}
+	}
+	if err != nil {
+		return nil, nil, err // no need to wrap in connectError because it will already be wrapped in all cases except PgError
+	}
+
+	if config.AfterConnect != nil {
+		err := config.AfterConnect(ctx, pgConn)
+		if err != nil {
+			pgConn.conn.Close()
+			return nil, nil, &connectError{config: config, msg: "AfterConnect error", err: err}
+		}
+	}
+
+	return pgConn, clientConn, nil
+}
+
+type CancelStartupError struct {
+	Cancel *pgproto3.CancelRequest
+}
+
+var _ error = (*CancelStartupError)(nil)
+
+func (*CancelStartupError) Error() string {
+	return "received cancel"
+}
+
+// initClientConn reads the start message from the frontend, returning an established
+// client conn (potentially with SSL as well as the startup message).
+func initClientConn(
+	serverTLSConfig *tls.Config,
+	clientConn net.Conn,
+) (*pgproto3.StartupMessage, net.Conn, error) {
+	// Read the startup message from the frontend.
+	fe := pgproto3.NewBackend(clientConn, clientConn)
+
+	for {
+		startMsg, err := fe.ReceiveStartupMessage()
+		if err != nil {
+			return nil, clientConn, err
+		}
+
+		switch startMsg := startMsg.(type) {
+		case *pgproto3.CancelRequest:
+			// If we received a cancel request, error now.
+			return nil, clientConn, &CancelStartupError{Cancel: startMsg}
+		case *pgproto3.StartupMessage:
+			return startMsg, clientConn, nil
+		case *pgproto3.SSLRequest:
+			response := [1]byte{'S'}
+			if serverTLSConfig == nil {
+				response[0] = 'N'
+			}
+			if _, err := clientConn.Write(response[:]); err != nil {
+				return nil, nil, fmt.Errorf("failed to write SSL response: %+v", err)
+			}
+
+			if serverTLSConfig != nil {
+				// Change the frontend to also use TLS.
+				// On the next message, the SSL handshake will occur in the background.
+				clientConn = tls.Server(clientConn, serverTLSConfig)
+				fe = pgproto3.NewBackend(clientConn, clientConn)
+			}
+		case *pgproto3.GSSEncRequest:
+			return nil, clientConn, fmt.Errorf("GSSEnc not yet supported")
+		default:
+			return nil, clientConn, fmt.Errorf("unknown message type %T", startMsg)
+		}
+	}
+}
+
+func makeFallbackConfigs(ctx context.Context, config *Config) ([]*FallbackConfig, error) {
+	var err error
+	fallbackConfigs := []*FallbackConfig{
+		{
+			Host:      config.Host,
+			Port:      config.Port,
+			TLSConfig: config.TLSConfig,
+		},
+	}
+	fallbackConfigs = append(fallbackConfigs, config.Fallbacks...)
+	fallbackConfigs, err = expandWithIPs(ctx, config.LookupFunc, fallbackConfigs)
+	if err != nil {
+		return nil, &connectError{config: config, msg: "hostname resolving error", err: err}
+	}
+
+	if len(fallbackConfigs) == 0 {
+		return nil, &connectError{config: config, msg: "hostname resolving error", err: errors.New("ip addr wasn't found")}
+	}
+	return fallbackConfigs, nil
+}
+
+// initPassthroughConn attempts to initiate a connection using the fallbackConfig.
+// This matches the first few lines of `connect`.
+func initPassthroughConn(ctx context.Context, config *Config, fallbackConfig *FallbackConfig) (*PgConn, error) {
+	pgConn := new(PgConn)
+	pgConn.config = config
+	pgConn.cleanupDone = make(chan struct{})
+
+	var err error
+	network, address := NetworkAddress(fallbackConfig.Host, fallbackConfig.Port)
+	netConn, err := config.DialFunc(ctx, network, address)
+	if err != nil {
+		return nil, &connectError{config: config, msg: "dial error", err: normalizeTimeoutError(ctx, err)}
+	}
+
+	pgConn.conn = netConn
+	pgConn.contextWatcher = newContextWatcher(netConn)
+	pgConn.contextWatcher.Watch(ctx)
+
+	if fallbackConfig.TLSConfig != nil {
+		nbTLSConn, err := startTLS(netConn, fallbackConfig.TLSConfig)
+		pgConn.contextWatcher.Unwatch() // Always unwatch `netConn` after TLS.
+		if err != nil {
+			netConn.Close()
+			return nil, &connectError{config: config, msg: "tls error", err: err}
+		}
+
+		pgConn.conn = nbTLSConn
+		pgConn.contextWatcher = newContextWatcher(nbTLSConn)
+		pgConn.contextWatcher.Watch(ctx)
+	}
+
+	defer pgConn.contextWatcher.Unwatch()
+
+	pgConn.parameterStatuses = make(map[string]string)
+	pgConn.status = connStatusConnecting
+	pgConn.bgReader = bgreader.New(pgConn.conn)
+	pgConn.slowWriteTimer = time.AfterFunc(time.Duration(math.MaxInt64), pgConn.bgReader.Start)
+	pgConn.slowWriteTimer.Stop()
+	pgConn.frontend = config.BuildFrontend(pgConn.conn, pgConn.conn)
+	return pgConn, nil
+}
+
+func connectPassthrough(
+	ctx context.Context,
+	config *Config,
+	serverTLSConfig *tls.Config,
+	clientConn net.Conn,
+) (*PgConn, net.Conn, error) {
+	// We must first establish the SSL handshake between client <-> proxy and
+	// proxy <-> server. We cannot re-use the same SSL certs here as the
+	// proxy and server may have different SSL certificates.
+
+	// Initialize SSL through the client connection.
+	var clientStartMsg *pgproto3.StartupMessage
+	var err error
+	clientStartMsg, clientConn, err = initClientConn(serverTLSConfig, clientConn)
+	if err != nil {
+		return nil, clientConn, err
+	}
+	clientFrontend := pgproto3.NewBackend(clientConn, clientConn)
+
+	// Loop through all fallback configs until one passes.
+	fallbackConfigs, err := makeFallbackConfigs(ctx, config)
+	if err != nil {
+		return nil, clientConn, err
+	}
+	var pgConn *PgConn
+	for _, fc := range fallbackConfigs {
+		pgConn, err = initPassthroughConn(ctx, config, fc)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return nil, clientConn, err
+	}
+
+	// Once the relevant handshakes are established, attempt to start up the
+	// connection.
+	if err := func() error {
+		// Send the initial client message.
+		pgConn.frontend.Send(clientStartMsg)
+		if err := pgConn.frontend.Flush(); err != nil {
+			return &connectError{config: config, msg: "failed to receive message", err: err}
+		}
+
+		// Now we can loop receiving auth packets until we succeed.
+		for {
+			msg, err := pgConn.receiveMessage()
+			if err != nil {
+				// This signifies a fatal error.
+				// receiveMessage() swallows FATAL errors, so we must reconstruct it
+				// and send it back to the user before flushing the connection.
+				if pgErr, ok := err.(*PgError); ok {
+					clientFrontend.Send(&pgproto3.ErrorResponse{
+						Severity:         pgErr.Severity,
+						Code:             pgErr.Code,
+						Message:          pgErr.Message,
+						Detail:           pgErr.Detail,
+						Hint:             pgErr.Hint,
+						Position:         pgErr.Position,
+						InternalPosition: pgErr.InternalPosition,
+						InternalQuery:    pgErr.InternalQuery,
+						Where:            pgErr.Where,
+						SchemaName:       pgErr.SchemaName,
+						TableName:        pgErr.TableName,
+						ColumnName:       pgErr.ColumnName,
+						DataTypeName:     pgErr.DataTypeName,
+						ConstraintName:   pgErr.ConstraintName,
+						File:             pgErr.File,
+						Line:             pgErr.Line,
+						Routine:          pgErr.Routine,
+					})
+					// Flush everything and return the error using best effort.
+					if err := clientFrontend.Flush(); err != nil {
+						return &connectError{
+							config: config,
+							msg:    fmt.Sprintf("failed to flush fatal error: %s", err.Error()),
+							err:    pgErr,
+						}
+					}
+					return &connectError{config: config, msg: "fatal pg error", err: pgErr}
+				}
+				return &connectError{config: config, msg: "failed to receive message", err: err}
+			}
+			clientFrontend.Send(msg)
+
+			switch msg := msg.(type) {
+			case *pgproto3.BackendKeyData:
+				// TODO(#migrations): do we want to change this? It is important we do this
+				// correctly for the cancel protocol.
+				pgConn.pid = msg.ProcessID
+				pgConn.secretKey = msg.SecretKey
+			case *pgproto3.AuthenticationOk:
+				// Expect more packets after this.
+			case *pgproto3.AuthenticationCleartextPassword,
+				*pgproto3.AuthenticationMD5Password,
+				*pgproto3.AuthenticationSASL, *pgproto3.AuthenticationSASLContinue:
+				if err := clientFrontend.Flush(); err != nil {
+					return &connectError{config: config, msg: fmt.Sprintf("failed to flush %T message", msg), err: err}
+				}
+
+				// Set the correct auth type to any message received is decoded correctly.
+				switch msg.(type) {
+				case *pgproto3.AuthenticationCleartextPassword:
+					clientFrontend.SetAuthType(pgproto3.AuthTypeCleartextPassword)
+				case *pgproto3.AuthenticationMD5Password:
+					clientFrontend.SetAuthType(pgproto3.AuthTypeMD5Password)
+				case *pgproto3.AuthenticationSASL:
+					clientFrontend.SetAuthType(pgproto3.AuthTypeSASL)
+				case *pgproto3.AuthenticationSASLContinue:
+					clientFrontend.SetAuthType(pgproto3.AuthTypeSASLContinue)
+				}
+				// Wait for password from the user.
+				clientMsg, err := clientFrontend.Receive()
+				if err != nil {
+					return &connectError{config: config, msg: fmt.Sprintf("failed to receive %T response", msg), err: err}
+				}
+				pgConn.frontend.Send(clientMsg)
+				if err := pgConn.frontend.Flush(); err != nil {
+					return &connectError{config: config, msg: fmt.Sprintf("failed to flush %T response to %T", clientMsg, msg), err: err}
+				}
+			case *pgproto3.AuthenticationSASLFinal:
+				// Expect more packets after this.
+			case *pgproto3.AuthenticationGSS, *pgproto3.AuthenticationGSSContinue:
+				return fmt.Errorf("gss not yet supported")
+			case *pgproto3.ReadyForQuery:
+				pgConn.status = connStatusIdle
+				// config.ValidateConnect was deleted here.
+				// This is for "read only" pgx connections, which is not supported by the proxy.
+				if err := clientFrontend.Flush(); err != nil {
+					return &connectError{config: config, msg: "failed to flush ready for query", err: err}
+				}
+				return nil
+			case *pgproto3.ParameterStatus, *pgproto3.NoticeResponse:
+				// handled by ReceiveMessage
+			case *pgproto3.ErrorResponse:
+				// Flush everything and return the error.
+				if err := clientFrontend.Flush(); err != nil {
+					return &connectError{config: config, msg: "failed to flush error response", err: err}
+				}
+				return ErrorResponseToPgError(msg)
+			default:
+				return &connectError{config: config, msg: "received unexpected message", err: err}
+			}
+		}
+	}(); err != nil {
+		pgConn.conn.Close()
+		return nil, clientConn, err
+	}
+	return pgConn, clientConn, nil
+}
+
 func connect(ctx context.Context, config *Config, fallbackConfig *FallbackConfig,
 	ignoreNotPreferredErr bool,
 ) (*PgConn, error) {

@@ -272,25 +272,25 @@ func ConnectPassthrough(
 	config *Config,
 	serverTLSConfig *tls.Config,
 	clientConn net.Conn,
-) (pgConn *PgConn, retConn net.Conn, err error) {
+) (pgConn *PgConn, startupMessage *pgproto3.StartupMessage, retConn net.Conn, err error) {
 	// TODO(#migrations): fallback configs?
-	pgConn, clientConn, err = connectPassthrough(ctx, config, serverTLSConfig, clientConn)
+	pgConn, startupMessage, clientConn, err = connectPassthrough(ctx, config, serverTLSConfig, clientConn)
 	if pgerr, ok := err.(*PgError); ok {
 		err = &connectError{config: config, msg: "server error", err: pgerr}
 	}
 	if err != nil {
-		return nil, nil, err // no need to wrap in connectError because it will already be wrapped in all cases except PgError
+		return nil, startupMessage, clientConn, err // no need to wrap in connectError because it will already be wrapped in all cases except PgError
 	}
 
 	if config.AfterConnect != nil {
 		err := config.AfterConnect(ctx, pgConn)
 		if err != nil {
 			pgConn.conn.Close()
-			return nil, nil, &connectError{config: config, msg: "AfterConnect error", err: err}
+			return nil, startupMessage, clientConn, &connectError{config: config, msg: "AfterConnect error", err: err}
 		}
 	}
 
-	return pgConn, clientConn, nil
+	return pgConn, startupMessage, clientConn, nil
 }
 
 type CancelStartupError struct {
@@ -415,7 +415,7 @@ func connectPassthrough(
 	config *Config,
 	serverTLSConfig *tls.Config,
 	clientConn net.Conn,
-) (*PgConn, net.Conn, error) {
+) (*PgConn, *pgproto3.StartupMessage, net.Conn, error) {
 	// We must first establish the SSL handshake between client <-> proxy and
 	// proxy <-> server. We cannot re-use the same SSL certs here as the
 	// proxy and server may have different SSL certificates.
@@ -425,14 +425,19 @@ func connectPassthrough(
 	var err error
 	clientStartMsg, clientConn, err = initClientConn(serverTLSConfig, clientConn)
 	if err != nil {
-		return nil, clientConn, err
+		return nil, nil, clientConn, err
+	}
+	// Make a copy of the startup message.
+	clientStartMsg = &pgproto3.StartupMessage{
+		ProtocolVersion: clientStartMsg.ProtocolVersion,
+		Parameters:      clientStartMsg.Parameters,
 	}
 	clientFrontend := pgproto3.NewBackend(clientConn, clientConn)
 
 	// Loop through all fallback configs until one passes.
 	fallbackConfigs, err := makeFallbackConfigs(ctx, config)
 	if err != nil {
-		return nil, clientConn, err
+		return nil, clientStartMsg, clientConn, err
 	}
 	var pgConn *PgConn
 	for _, fc := range fallbackConfigs {
@@ -442,7 +447,7 @@ func connectPassthrough(
 		}
 	}
 	if err != nil {
-		return nil, clientConn, err
+		return nil, clientStartMsg, clientConn, err
 	}
 
 	// Once the relevant handshakes are established, attempt to start up the
@@ -556,9 +561,9 @@ func connectPassthrough(
 		}
 	}(); err != nil {
 		pgConn.conn.Close()
-		return nil, clientConn, err
+		return nil, clientStartMsg, clientConn, err
 	}
-	return pgConn, clientConn, nil
+	return pgConn, clientStartMsg, clientConn, nil
 }
 
 func connect(ctx context.Context, config *Config, fallbackConfig *FallbackConfig,

@@ -86,19 +86,21 @@ func (f *Frontend) Flush() error {
 	}
 
 	n, err := f.w.Write(f.wbuf)
+	f.Reset()
+	if err != nil {
+		return &writeError{err: err, safeToRetry: n == 0}
+	}
 
+	return nil
+}
+
+func (f *Frontend) Reset() {
 	const maxLen = 1024
 	if len(f.wbuf) > maxLen {
 		f.wbuf = make([]byte, 0, maxLen)
 	} else {
 		f.wbuf = f.wbuf[:0]
 	}
-
-	if err != nil {
-		return &writeError{err: err, safeToRetry: n == 0}
-	}
-
-	return nil
 }
 
 // Trace starts tracing the message traffic to w. It writes in a similar format to that produced by the libpq function

@@ -67,19 +67,21 @@ func (b *Backend) Send(msg BackendMessage) {
 // Flush writes any pending messages to the frontend (i.e. the client).
 func (b *Backend) Flush() error {
 	n, err := b.w.Write(b.wbuf)
+	b.Reset()
+	if err != nil {
+		return &writeError{err: err, safeToRetry: n == 0}
+	}
 
+	return nil
+}
+
+func (b *Backend) Reset() {
 	const maxLen = 1024
 	if len(b.wbuf) > maxLen {
 		b.wbuf = make([]byte, 0, maxLen)
 	} else {
 		b.wbuf = b.wbuf[:0]
 	}
-
-	if err != nil {
-		return &writeError{err: err, safeToRetry: n == 0}
-	}
-
-	return nil
 }
 
 // Trace starts tracing the message traffic to w. It writes in a similar format to that produced by the libpq function

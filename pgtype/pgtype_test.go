@@ -47,15 +47,6 @@ type _byteSlice []byte
 // is not known (e.g. when using the simple protocol).
 const unregisteredOID = uint32(1)
 
-func mustParseCIDR(t testing.TB, s string) *net.IPNet {
-	_, ipnet, err := net.ParseCIDR(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return ipnet
-}
-
 func mustParseInet(t testing.TB, s string) *net.IPNet {
 	ip, ipnet, err := net.ParseCIDR(s)
 	if err == nil {
@@ -451,6 +442,60 @@ func TestMapScanNullToWrongType(t *testing.T) {
 	err = m.Scan(pgtype.TextOID, pgx.TextFormatCode, nil, &pn)
 	assert.NoError(t, err)
 	assert.False(t, pn.Valid)
+}
+
+func TestMapScanTextToBool(t *testing.T) {
+	tests := []struct {
+		name string
+		src  []byte
+		want bool
+	}{
+		{"t", []byte("t"), true},
+		{"f", []byte("f"), false},
+		{"y", []byte("y"), true},
+		{"n", []byte("n"), false},
+		{"1", []byte("1"), true},
+		{"0", []byte("0"), false},
+		{"true", []byte("true"), true},
+		{"false", []byte("false"), false},
+		{"yes", []byte("yes"), true},
+		{"no", []byte("no"), false},
+		{"on", []byte("on"), true},
+		{"off", []byte("off"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pgtype.NewMap()
+
+			var v bool
+			err := m.Scan(pgtype.BoolOID, pgx.TextFormatCode, tt.src, &v)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, v)
+		})
+	}
+}
+
+func TestMapScanTextToBoolError(t *testing.T) {
+	tests := []struct {
+		name string
+		src  []byte
+		want string
+	}{
+		{"nil", nil, "cannot scan NULL into *bool"},
+		{"empty", []byte{}, "cannot scan empty string into *bool"},
+		{"foo", []byte("foo"), "unknown boolean string representation \"foo\""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pgtype.NewMap()
+
+			var v bool
+			err := m.Scan(pgtype.BoolOID, pgx.TextFormatCode, tt.src, &v)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
 }
 
 type databaseValuerUUID [16]byte

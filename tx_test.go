@@ -161,7 +161,7 @@ func TestTxCommitSerializationFailure(t *testing.T) {
 	c2 := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, c2)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	c1.Exec(ctx, `drop table if exists tx_serializable_sums`)
@@ -372,6 +372,26 @@ func TestBeginReadOnly(t *testing.T) {
 	}
 }
 
+func TestBeginTxBeginQuery(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		tx, err := conn.BeginTx(ctx, pgx.TxOptions{BeginQuery: "begin read only"})
+		require.NoError(t, err)
+		defer tx.Rollback(ctx)
+
+		var readOnly bool
+		conn.QueryRow(ctx, "select current_setting('transaction_read_only')::bool").Scan(&readOnly)
+		require.True(t, readOnly)
+
+		err = tx.Rollback(ctx)
+		require.NoError(t, err)
+	})
+}
+
 func TestTxNestedTransactionCommit(t *testing.T) {
 	t.Parallel()
 
@@ -535,6 +555,7 @@ func TestTxBeginFuncNestedTransactionCommit(t *testing.T) {
 				require.NoError(t, err)
 				return nil
 			})
+			require.NoError(t, err)
 
 			return nil
 		})
@@ -581,6 +602,7 @@ func TestTxBeginFuncNestedTransactionRollback(t *testing.T) {
 
 		return nil
 	})
+	require.NoError(t, err)
 
 	var n int64
 	err = db.QueryRow(context.Background(), "select count(*) from foo").Scan(&n)

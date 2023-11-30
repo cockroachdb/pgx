@@ -17,7 +17,8 @@ import (
 func TestConnCopyWithAllQueryExecModes(t *testing.T) {
 	for _, mode := range pgxtest.AllQueryExecModes {
 		t.Run(mode.String(), func(t *testing.T) {
-			t.Parallel()
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
 
 			cfg := mustParseConfig(t, os.Getenv("PGX_TEST_DATABASE"))
 			cfg.DefaultQueryExecMode = mode
@@ -39,7 +40,7 @@ func TestConnCopyWithAllQueryExecModes(t *testing.T) {
 				{nil, nil, nil, nil, nil},
 			}
 
-			copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e"}, pgx.CopyFromRows(inputRows))
+			copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e"}, pgx.CopyFromRows(inputRows))
 			if err != nil {
 				t.Errorf("Unexpected error for CopyFrom: %v", err)
 			}
@@ -47,7 +48,7 @@ func TestConnCopyWithAllQueryExecModes(t *testing.T) {
 				t.Errorf("Expected CopyFrom to return %d copied rows, but got %d", len(inputRows), copyCount)
 			}
 
-			rows, err := conn.Query(context.Background(), "select * from foo")
+			rows, err := conn.Query(ctx, "select * from foo")
 			if err != nil {
 				t.Errorf("Unexpected error for Query: %v", err)
 			}
@@ -78,7 +79,8 @@ func TestConnCopyWithKnownOIDQueryExecModes(t *testing.T) {
 
 	for _, mode := range pgxtest.KnownOIDQueryExecModes {
 		t.Run(mode.String(), func(t *testing.T) {
-			t.Parallel()
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
 
 			cfg := mustParseConfig(t, os.Getenv("PGX_TEST_DATABASE"))
 			cfg.DefaultQueryExecMode = mode
@@ -102,7 +104,7 @@ func TestConnCopyWithKnownOIDQueryExecModes(t *testing.T) {
 				{nil, nil, nil, nil, nil, nil, nil},
 			}
 
-			copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g"}, pgx.CopyFromRows(inputRows))
+			copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g"}, pgx.CopyFromRows(inputRows))
 			if err != nil {
 				t.Errorf("Unexpected error for CopyFrom: %v", err)
 			}
@@ -110,7 +112,7 @@ func TestConnCopyWithKnownOIDQueryExecModes(t *testing.T) {
 				t.Errorf("Expected CopyFrom to return %d copied rows, but got %d", len(inputRows), copyCount)
 			}
 
-			rows, err := conn.Query(context.Background(), "select * from foo")
+			rows, err := conn.Query(ctx, "select * from foo")
 			if err != nil {
 				t.Errorf("Unexpected error for Query: %v", err)
 			}
@@ -140,6 +142,9 @@ func TestConnCopyWithKnownOIDQueryExecModes(t *testing.T) {
 func TestConnCopyFromSmall(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
@@ -160,7 +165,7 @@ func TestConnCopyFromSmall(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g"}, pgx.CopyFromRows(inputRows))
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g"}, pgx.CopyFromRows(inputRows))
 	if err != nil {
 		t.Errorf("Unexpected error for CopyFrom: %v", err)
 	}
@@ -168,7 +173,7 @@ func TestConnCopyFromSmall(t *testing.T) {
 		t.Errorf("Expected CopyFrom to return %d copied rows, but got %d", len(inputRows), copyCount)
 	}
 
-	rows, err := conn.Query(context.Background(), "select * from foo")
+	rows, err := conn.Query(ctx, "select * from foo")
 	if err != nil {
 		t.Errorf("Unexpected error for Query: %v", err)
 	}
@@ -196,6 +201,9 @@ func TestConnCopyFromSmall(t *testing.T) {
 func TestConnCopyFromSliceSmall(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
@@ -216,7 +224,7 @@ func TestConnCopyFromSliceSmall(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g"},
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g"},
 		pgx.CopyFromSlice(len(inputRows), func(i int) ([]any, error) {
 			return inputRows[i], nil
 		}))
@@ -227,7 +235,7 @@ func TestConnCopyFromSliceSmall(t *testing.T) {
 		t.Errorf("Expected CopyFrom to return %d copied rows, but got %d", len(inputRows), copyCount)
 	}
 
-	rows, err := conn.Query(context.Background(), "select * from foo")
+	rows, err := conn.Query(ctx, "select * from foo")
 	if err != nil {
 		t.Errorf("Unexpected error for Query: %v", err)
 	}
@@ -255,10 +263,11 @@ func TestConnCopyFromSliceSmall(t *testing.T) {
 func TestConnCopyFromLarge(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
-
-	pgxtest.SkipCockroachDB(t, conn, "Skipping due to known server issue: (https://github.com/cockroachdb/cockroach/issues/52722)")
 
 	mustExec(t, conn, `create temporary table foo(
 		a int2,
@@ -279,7 +288,7 @@ func TestConnCopyFromLarge(t *testing.T) {
 		inputRows = append(inputRows, []any{int16(0), int32(1), int64(2), "abc", "efg", time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), tzedTime, []byte{111, 111, 111, 111}})
 	}
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g", "h"}, pgx.CopyFromRows(inputRows))
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g", "h"}, pgx.CopyFromRows(inputRows))
 	if err != nil {
 		t.Errorf("Unexpected error for CopyFrom: %v", err)
 	}
@@ -287,7 +296,7 @@ func TestConnCopyFromLarge(t *testing.T) {
 		t.Errorf("Expected CopyFrom to return %d copied rows, but got %d", len(inputRows), copyCount)
 	}
 
-	rows, err := conn.Query(context.Background(), "select * from foo")
+	rows, err := conn.Query(ctx, "select * from foo")
 	if err != nil {
 		t.Errorf("Unexpected error for Query: %v", err)
 	}
@@ -315,10 +324,12 @@ func TestConnCopyFromLarge(t *testing.T) {
 func TestConnCopyFromEnum(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
-	ctx := context.Background()
 	tx, err := conn.Begin(ctx)
 	require.NoError(t, err)
 	defer tx.Rollback(ctx)
@@ -358,11 +369,11 @@ func TestConnCopyFromEnum(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil},
 	}
 
-	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f"}, pgx.CopyFromRows(inputRows))
+	copyCount, err := tx.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f"}, pgx.CopyFromRows(inputRows))
 	require.NoError(t, err)
 	require.EqualValues(t, len(inputRows), copyCount)
 
-	rows, err := conn.Query(ctx, "select * from foo")
+	rows, err := tx.Query(ctx, "select * from foo")
 	require.NoError(t, err)
 
 	var outputRows [][]any
@@ -378,11 +389,17 @@ func TestConnCopyFromEnum(t *testing.T) {
 		t.Errorf("Input rows and output rows do not equal: %v -> %v", inputRows, outputRows)
 	}
 
+	err = tx.Rollback(ctx)
+	require.NoError(t, err)
+
 	ensureConnValid(t, conn)
 }
 
 func TestConnCopyFromJSON(t *testing.T) {
 	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
 
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
@@ -403,7 +420,7 @@ func TestConnCopyFromJSON(t *testing.T) {
 		{nil, nil},
 	}
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a", "b"}, pgx.CopyFromRows(inputRows))
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b"}, pgx.CopyFromRows(inputRows))
 	if err != nil {
 		t.Errorf("Unexpected error for CopyFrom: %v", err)
 	}
@@ -411,7 +428,7 @@ func TestConnCopyFromJSON(t *testing.T) {
 		t.Errorf("Expected CopyFrom to return %d copied rows, but got %d", len(inputRows), copyCount)
 	}
 
-	rows, err := conn.Query(context.Background(), "select * from foo")
+	rows, err := conn.Query(ctx, "select * from foo")
 	if err != nil {
 		t.Errorf("Unexpected error for Query: %v", err)
 	}
@@ -461,6 +478,9 @@ func (cfs *clientFailSource) Err() error {
 func TestConnCopyFromFailServerSideMidway(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
@@ -475,7 +495,7 @@ func TestConnCopyFromFailServerSideMidway(t *testing.T) {
 		{int32(3), "def"},
 	}
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a", "b"}, pgx.CopyFromRows(inputRows))
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b"}, pgx.CopyFromRows(inputRows))
 	if err == nil {
 		t.Errorf("Expected CopyFrom return error, but it did not")
 	}
@@ -486,7 +506,7 @@ func TestConnCopyFromFailServerSideMidway(t *testing.T) {
 		t.Errorf("Expected CopyFrom to return 0 copied rows, but got %d", copyCount)
 	}
 
-	rows, err := conn.Query(context.Background(), "select * from foo")
+	rows, err := conn.Query(ctx, "select * from foo")
 	if err != nil {
 		t.Errorf("Unexpected error for Query: %v", err)
 	}
@@ -537,6 +557,9 @@ func (fs *failSource) Err() error {
 func TestConnCopyFromFailServerSideMidwayAbortsWithoutWaiting(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
@@ -548,7 +571,7 @@ func TestConnCopyFromFailServerSideMidwayAbortsWithoutWaiting(t *testing.T) {
 
 	startTime := time.Now()
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a"}, &failSource{})
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a"}, &failSource{})
 	if err == nil {
 		t.Errorf("Expected CopyFrom return error, but it did not")
 	}
@@ -565,7 +588,7 @@ func TestConnCopyFromFailServerSideMidwayAbortsWithoutWaiting(t *testing.T) {
 		t.Errorf("Failing CopyFrom shouldn't have taken so long: %v", copyTime)
 	}
 
-	rows, err := conn.Query(context.Background(), "select * from foo")
+	rows, err := conn.Query(ctx, "select * from foo")
 	if err != nil {
 		t.Errorf("Unexpected error for Query: %v", err)
 	}
@@ -614,6 +637,9 @@ func (fs *slowFailRaceSource) Err() error {
 func TestConnCopyFromSlowFailRace(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
@@ -622,7 +648,7 @@ func TestConnCopyFromSlowFailRace(t *testing.T) {
 		b bytea not null
 	)`)
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a", "b"}, &slowFailRaceSource{})
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b"}, &slowFailRaceSource{})
 	if err == nil {
 		t.Errorf("Expected CopyFrom return error, but it did not")
 	}
@@ -639,6 +665,9 @@ func TestConnCopyFromSlowFailRace(t *testing.T) {
 func TestConnCopyFromCopyFromSourceErrorMidway(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
@@ -646,7 +675,7 @@ func TestConnCopyFromCopyFromSourceErrorMidway(t *testing.T) {
 		a bytea not null
 	)`)
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a"}, &clientFailSource{})
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a"}, &clientFailSource{})
 	if err == nil {
 		t.Errorf("Expected CopyFrom return error, but it did not")
 	}
@@ -654,7 +683,7 @@ func TestConnCopyFromCopyFromSourceErrorMidway(t *testing.T) {
 		t.Errorf("Expected CopyFrom to return 0 copied rows, but got %d", copyCount)
 	}
 
-	rows, err := conn.Query(context.Background(), "select * from foo")
+	rows, err := conn.Query(ctx, "select * from foo")
 	if err != nil {
 		t.Errorf("Unexpected error for Query: %v", err)
 	}
@@ -699,6 +728,9 @@ func (cfs *clientFinalErrSource) Err() error {
 func TestConnCopyFromCopyFromSourceErrorEnd(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
@@ -706,7 +738,7 @@ func TestConnCopyFromCopyFromSourceErrorEnd(t *testing.T) {
 		a bytea not null
 	)`)
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a"}, &clientFinalErrSource{})
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a"}, &clientFinalErrSource{})
 	if err == nil {
 		t.Errorf("Expected CopyFrom return error, but it did not")
 	}
@@ -714,7 +746,7 @@ func TestConnCopyFromCopyFromSourceErrorEnd(t *testing.T) {
 		t.Errorf("Expected CopyFrom to return 0 copied rows, but got %d", copyCount)
 	}
 
-	rows, err := conn.Query(context.Background(), "select * from foo")
+	rows, err := conn.Query(ctx, "select * from foo")
 	if err != nil {
 		t.Errorf("Unexpected error for Query: %v", err)
 	}
@@ -742,6 +774,9 @@ func TestConnCopyFromCopyFromSourceErrorEnd(t *testing.T) {
 func TestConnCopyFromAutomaticStringConversion(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
@@ -755,11 +790,11 @@ func TestConnCopyFromAutomaticStringConversion(t *testing.T) {
 		{8},
 	}
 
-	copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a"}, pgx.CopyFromRows(inputRows))
+	copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a"}, pgx.CopyFromRows(inputRows))
 	require.NoError(t, err)
 	require.EqualValues(t, len(inputRows), copyCount)
 
-	rows, _ := conn.Query(context.Background(), "select * from foo")
+	rows, _ := conn.Query(ctx, "select * from foo")
 	nums, err := pgx.CollectRows(rows, pgx.RowTo[int64])
 	require.NoError(t, err)
 

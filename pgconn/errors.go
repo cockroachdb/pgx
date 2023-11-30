@@ -96,10 +96,13 @@ type parseConfigError struct {
 
 func (e *parseConfigError) Error() string {
 	connString := redactPW(e.connString)
-	if e.err == nil {
-		return fmt.Sprintf("cannot parse `%s`: %s", connString, e.msg)
-	}
-	return fmt.Sprintf("cannot parse `%s`: %s (%s)", connString, e.msg, e.err.Error())
+	// if e.err == nil {
+	// 	return fmt.Sprintf("cannot parse `%s`: %s", connString, e.msg)
+	// }
+	// Do not show the e.err.Error() as that is the error returned from url.Parse()
+	// which does not redact conns strings and can leak information in logs.
+	return fmt.Sprintf("cannot parse `%s`: %s", connString, e.msg)
+	//return fmt.Sprintf("cannot parse `%s`: %s (%s)", connString, e.msg, e.err.Error())
 }
 
 func (e *parseConfigError) Unwrap() error {

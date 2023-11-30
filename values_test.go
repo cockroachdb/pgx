@@ -19,7 +19,10 @@ import (
 func TestDateTranscode(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		dates := []time.Time{
 			time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC),
 			time.Date(1000, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -58,7 +61,10 @@ func TestDateTranscode(t *testing.T) {
 func TestTimestampTzTranscode(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		inputTime := time.Date(2013, 1, 2, 3, 4, 5, 6000, time.Local)
 
 		var outputTime time.Time
@@ -78,7 +84,10 @@ func TestTimestampTzTranscode(t *testing.T) {
 func TestJSONAndJSONBTranscode(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		for _, typename := range []string{"json", "jsonb"} {
 			if _, ok := conn.TypeMap().TypeForName(typename); !ok {
 				continue // No JSON/JSONB type -- must be running against old PostgreSQL
@@ -246,7 +255,10 @@ func mustParseCIDR(t testing.TB, s string) *net.IPNet {
 func TestInetCIDRTranscodeIPNet(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		tests := []struct {
 			sql   string
 			value *net.IPNet
@@ -297,7 +309,10 @@ func TestInetCIDRTranscodeIPNet(t *testing.T) {
 func TestInetCIDRTranscodeIP(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		tests := []struct {
 			sql   string
 			value net.IP
@@ -361,7 +376,10 @@ func TestInetCIDRTranscodeIP(t *testing.T) {
 func TestInetCIDRArrayTranscodeIPNet(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		tests := []struct {
 			sql   string
 			value []*net.IPNet
@@ -424,7 +442,10 @@ func TestInetCIDRArrayTranscodeIPNet(t *testing.T) {
 func TestInetCIDRArrayTranscodeIP(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		tests := []struct {
 			sql   string
 			value []net.IP
@@ -510,7 +531,10 @@ func TestInetCIDRArrayTranscodeIP(t *testing.T) {
 func TestInetCIDRTranscodeWithJustIP(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		tests := []struct {
 			sql   string
 			value string
@@ -556,7 +580,10 @@ func TestInetCIDRTranscodeWithJustIP(t *testing.T) {
 func TestArrayDecoding(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		tests := []struct {
 			sql    string
 			query  any
@@ -672,7 +699,10 @@ func TestArrayDecoding(t *testing.T) {
 func TestEmptyArrayDecoding(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		var val []string
 
 		err := conn.QueryRow(context.Background(), "select array[]::text[]").Scan(&val)
@@ -717,7 +747,10 @@ func TestEmptyArrayDecoding(t *testing.T) {
 func TestPointerPointer(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		pgxtest.SkipCockroachDB(t, conn, "Server auto converts ints to bigint and test relies on exact types")
 
 		type allTypes struct {
@@ -803,7 +836,10 @@ func TestPointerPointer(t *testing.T) {
 func TestPointerPointerNonZero(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		f := "foo"
 		dest := &f
 
@@ -820,7 +856,10 @@ func TestPointerPointerNonZero(t *testing.T) {
 func TestEncodeTypeRename(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		type _int int
 		inInt := _int(1)
 		var outInt _int
@@ -865,6 +904,10 @@ func TestEncodeTypeRename(t *testing.T) {
 		inString := _string("foo")
 		var outString _string
 
+		type _bool bool
+		inBool := _bool(true)
+		var outBool _bool
+
 		// pgx.QueryExecModeExec requires all types to be registered.
 		conn.TypeMap().RegisterDefaultPgType(inInt, "int8")
 		conn.TypeMap().RegisterDefaultPgType(inInt8, "int8")
@@ -877,10 +920,11 @@ func TestEncodeTypeRename(t *testing.T) {
 		conn.TypeMap().RegisterDefaultPgType(inUint32, "int8")
 		conn.TypeMap().RegisterDefaultPgType(inUint64, "int8")
 		conn.TypeMap().RegisterDefaultPgType(inString, "text")
+		conn.TypeMap().RegisterDefaultPgType(inBool, "bool")
 
-		err := conn.QueryRow(context.Background(), "select $1::int, $2::int, $3::int2, $4::int4, $5::int8, $6::int, $7::int, $8::int, $9::int, $10::int, $11::text",
-			inInt, inInt8, inInt16, inInt32, inInt64, inUint, inUint8, inUint16, inUint32, inUint64, inString,
-		).Scan(&outInt, &outInt8, &outInt16, &outInt32, &outInt64, &outUint, &outUint8, &outUint16, &outUint32, &outUint64, &outString)
+		err := conn.QueryRow(context.Background(), "select $1::int, $2::int, $3::int2, $4::int4, $5::int8, $6::int, $7::int, $8::int, $9::int, $10::int, $11::text, $12::bool",
+			inInt, inInt8, inInt16, inInt32, inInt64, inUint, inUint8, inUint16, inUint32, inUint64, inString, inBool,
+		).Scan(&outInt, &outInt8, &outInt16, &outInt32, &outInt64, &outUint, &outUint8, &outUint16, &outUint32, &outUint64, &outString, &outBool)
 		if err != nil {
 			t.Fatalf("Failed with type rename: %v", err)
 		}
@@ -927,6 +971,10 @@ func TestEncodeTypeRename(t *testing.T) {
 
 		if inString != outString {
 			t.Errorf("string rename: expected %v, got %v", inString, outString)
+		}
+
+		if inBool != outBool {
+			t.Errorf("bool rename: expected %v, got %v", inBool, outBool)
 		}
 	})
 }
@@ -980,7 +1028,10 @@ func TestEncodeTypeRename(t *testing.T) {
 func TestRowsScanNilThenScanValue(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		sql := `select null as a, null as b
 union
 select 1, 2

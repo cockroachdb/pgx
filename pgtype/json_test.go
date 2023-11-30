@@ -121,6 +121,32 @@ func TestJSONCodecPointerToPointerToString(t *testing.T) {
 	})
 }
 
+// https://github.com/jackc/pgx/issues/1691
+func TestJSONCodecPointerToPointerToInt(t *testing.T) {
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		n := 44
+		p := &n
+		err := conn.QueryRow(ctx, "select 'null'::jsonb").Scan(&p)
+		require.NoError(t, err)
+		require.Nil(t, p)
+	})
+}
+
+// https://github.com/jackc/pgx/issues/1691
+func TestJSONCodecPointerToPointerToStruct(t *testing.T) {
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		type ImageSize struct {
+			Height int    `json:"height"`
+			Width  int    `json:"width"`
+			Str    string `json:"str"`
+		}
+		is := &ImageSize{Height: 100, Width: 100, Str: "str"}
+		err := conn.QueryRow(ctx, `select 'null'::jsonb`).Scan(&is)
+		require.NoError(t, err)
+		require.Nil(t, is)
+	})
+}
+
 func TestJSONCodecClearExistingValueBeforeUnmarshal(t *testing.T) {
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		m := map[string]any{}
@@ -131,5 +157,31 @@ func TestJSONCodecClearExistingValueBeforeUnmarshal(t *testing.T) {
 		err = conn.QueryRow(ctx, `select '{"baz": "quz"}'::json`).Scan(&m)
 		require.NoError(t, err)
 		require.Equal(t, map[string]any{"baz": "quz"}, m)
+	})
+}
+
+type ParentIssue1681 struct {
+	Child ChildIssue1681
+}
+
+func (t *ParentIssue1681) MarshalJSON() ([]byte, error) {
+	return []byte(`{"custom":"thing"}`), nil
+}
+
+type ChildIssue1681 struct{}
+
+func (t ChildIssue1681) MarshalJSON() ([]byte, error) {
+	return []byte(`{"someVal": false}`), nil
+}
+
+// https://github.com/jackc/pgx/issues/1681
+func TestJSONCodecEncodeJSONMarshalerThatCanBeWrapped(t *testing.T) {
+	skipCockroachDB(t, "CockroachDB treats json as jsonb. This causes it to format differently than PostgreSQL.")
+
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		var jsonStr string
+		err := conn.QueryRow(context.Background(), "select $1::json", &ParentIssue1681{}).Scan(&jsonStr)
+		require.NoError(t, err)
+		require.Equal(t, `{"custom":"thing"}`, jsonStr)
 	})
 }

@@ -3,6 +3,7 @@ package pgx_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxtest"
@@ -22,6 +23,8 @@ type testTracer struct {
 	traceConnectStart  func(ctx context.Context, data pgx.TraceConnectStartData) context.Context
 	traceConnectEnd    func(ctx context.Context, data pgx.TraceConnectEndData)
 }
+
+type ctxKey string
 
 func (tt *testTracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	if tt.traceQueryStart != nil {
@@ -106,20 +109,23 @@ func TestTraceExec(t *testing.T) {
 		return config
 	}
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		traceQueryStartCalled := false
 		tracer.traceQueryStart = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 			traceQueryStartCalled = true
 			require.Equal(t, `select $1::text`, data.SQL)
 			require.Len(t, data.Args, 1)
 			require.Equal(t, `testing`, data.Args[0])
-			return context.WithValue(ctx, "fromTraceQueryStart", "foo")
+			return context.WithValue(ctx, ctxKey(ctxKey("fromTraceQueryStart")), "foo")
 		}
 
 		traceQueryEndCalled := false
 		tracer.traceQueryEnd = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
 			traceQueryEndCalled = true
-			require.Equal(t, "foo", ctx.Value("fromTraceQueryStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey(ctxKey("fromTraceQueryStart"))))
 			require.Equal(t, `SELECT 1`, data.CommandTag.String())
 			require.NoError(t, data.Err)
 		}
@@ -143,20 +149,23 @@ func TestTraceQuery(t *testing.T) {
 		return config
 	}
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		traceQueryStartCalled := false
 		tracer.traceQueryStart = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 			traceQueryStartCalled = true
 			require.Equal(t, `select $1::text`, data.SQL)
 			require.Len(t, data.Args, 1)
 			require.Equal(t, `testing`, data.Args[0])
-			return context.WithValue(ctx, "fromTraceQueryStart", "foo")
+			return context.WithValue(ctx, ctxKey("fromTraceQueryStart"), "foo")
 		}
 
 		traceQueryEndCalled := false
 		tracer.traceQueryEnd = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
 			traceQueryEndCalled = true
-			require.Equal(t, "foo", ctx.Value("fromTraceQueryStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceQueryStart")))
 			require.Equal(t, `SELECT 1`, data.CommandTag.String())
 			require.NoError(t, data.Err)
 		}
@@ -182,26 +191,29 @@ func TestTraceBatchNormal(t *testing.T) {
 		return config
 	}
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		traceBatchStartCalled := false
 		tracer.traceBatchStart = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchStartData) context.Context {
 			traceBatchStartCalled = true
 			require.NotNil(t, data.Batch)
 			require.Equal(t, 2, data.Batch.Len())
-			return context.WithValue(ctx, "fromTraceBatchStart", "foo")
+			return context.WithValue(ctx, ctxKey("fromTraceBatchStart"), "foo")
 		}
 
 		traceBatchQueryCalledCount := 0
 		tracer.traceBatchQuery = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchQueryData) {
 			traceBatchQueryCalledCount++
-			require.Equal(t, "foo", ctx.Value("fromTraceBatchStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceBatchStart")))
 			require.NoError(t, data.Err)
 		}
 
 		traceBatchEndCalled := false
 		tracer.traceBatchEnd = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchEndData) {
 			traceBatchEndCalled = true
-			require.Equal(t, "foo", ctx.Value("fromTraceBatchStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceBatchStart")))
 			require.NoError(t, data.Err)
 		}
 
@@ -242,26 +254,29 @@ func TestTraceBatchClose(t *testing.T) {
 		return config
 	}
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		traceBatchStartCalled := false
 		tracer.traceBatchStart = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchStartData) context.Context {
 			traceBatchStartCalled = true
 			require.NotNil(t, data.Batch)
 			require.Equal(t, 2, data.Batch.Len())
-			return context.WithValue(ctx, "fromTraceBatchStart", "foo")
+			return context.WithValue(ctx, ctxKey("fromTraceBatchStart"), "foo")
 		}
 
 		traceBatchQueryCalledCount := 0
 		tracer.traceBatchQuery = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchQueryData) {
 			traceBatchQueryCalledCount++
-			require.Equal(t, "foo", ctx.Value("fromTraceBatchStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceBatchStart")))
 			require.NoError(t, data.Err)
 		}
 
 		traceBatchEndCalled := false
 		tracer.traceBatchEnd = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchEndData) {
 			traceBatchEndCalled = true
-			require.Equal(t, "foo", ctx.Value("fromTraceBatchStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceBatchStart")))
 			require.NoError(t, data.Err)
 		}
 
@@ -290,19 +305,22 @@ func TestTraceBatchErrorWhileReadingResults(t *testing.T) {
 		return config
 	}
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, ctr, []pgx.QueryExecMode{pgx.QueryExecModeSimpleProtocol}, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, ctr, []pgx.QueryExecMode{pgx.QueryExecModeSimpleProtocol}, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		traceBatchStartCalled := false
 		tracer.traceBatchStart = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchStartData) context.Context {
 			traceBatchStartCalled = true
 			require.NotNil(t, data.Batch)
 			require.Equal(t, 3, data.Batch.Len())
-			return context.WithValue(ctx, "fromTraceBatchStart", "foo")
+			return context.WithValue(ctx, ctxKey("fromTraceBatchStart"), "foo")
 		}
 
 		traceBatchQueryCalledCount := 0
 		tracer.traceBatchQuery = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchQueryData) {
 			traceBatchQueryCalledCount++
-			require.Equal(t, "foo", ctx.Value("fromTraceBatchStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceBatchStart")))
 			if traceBatchQueryCalledCount == 2 {
 				require.Error(t, data.Err)
 			} else {
@@ -313,7 +331,7 @@ func TestTraceBatchErrorWhileReadingResults(t *testing.T) {
 		traceBatchEndCalled := false
 		tracer.traceBatchEnd = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchEndData) {
 			traceBatchEndCalled = true
-			require.Equal(t, "foo", ctx.Value("fromTraceBatchStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceBatchStart")))
 			require.Error(t, data.Err)
 		}
 
@@ -356,19 +374,22 @@ func TestTraceBatchErrorWhileReadingResultsWhileClosing(t *testing.T) {
 		return config
 	}
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, ctr, []pgx.QueryExecMode{pgx.QueryExecModeSimpleProtocol}, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, ctr, []pgx.QueryExecMode{pgx.QueryExecModeSimpleProtocol}, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		traceBatchStartCalled := false
 		tracer.traceBatchStart = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchStartData) context.Context {
 			traceBatchStartCalled = true
 			require.NotNil(t, data.Batch)
 			require.Equal(t, 3, data.Batch.Len())
-			return context.WithValue(ctx, "fromTraceBatchStart", "foo")
+			return context.WithValue(ctx, ctxKey("fromTraceBatchStart"), "foo")
 		}
 
 		traceBatchQueryCalledCount := 0
 		tracer.traceBatchQuery = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchQueryData) {
 			traceBatchQueryCalledCount++
-			require.Equal(t, "foo", ctx.Value("fromTraceBatchStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceBatchStart")))
 			if traceBatchQueryCalledCount == 2 {
 				require.Error(t, data.Err)
 			} else {
@@ -379,7 +400,7 @@ func TestTraceBatchErrorWhileReadingResultsWhileClosing(t *testing.T) {
 		traceBatchEndCalled := false
 		tracer.traceBatchEnd = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchEndData) {
 			traceBatchEndCalled = true
-			require.Equal(t, "foo", ctx.Value("fromTraceBatchStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceBatchStart")))
 			require.Error(t, data.Err)
 		}
 
@@ -409,24 +430,30 @@ func TestTraceCopyFrom(t *testing.T) {
 		return config
 	}
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
 		traceCopyFromStartCalled := false
 		tracer.traceCopyFromStart = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
 			traceCopyFromStartCalled = true
 			require.Equal(t, pgx.Identifier{"foo"}, data.TableName)
 			require.Equal(t, []string{"a"}, data.ColumnNames)
-			return context.WithValue(ctx, "fromTraceCopyFromStart", "foo")
+			return context.WithValue(ctx, ctxKey("fromTraceCopyFromStart"), "foo")
 		}
 
 		traceCopyFromEndCalled := false
 		tracer.traceCopyFromEnd = func(ctx context.Context, conn *pgx.Conn, data pgx.TraceCopyFromEndData) {
 			traceCopyFromEndCalled = true
-			require.Equal(t, "foo", ctx.Value("fromTraceCopyFromStart"))
+			require.Equal(t, "foo", ctx.Value(ctxKey("fromTraceCopyFromStart")))
 			require.Equal(t, `COPY 2`, data.CommandTag.String())
 			require.NoError(t, data.Err)
 		}
 
-		_, err := conn.Exec(context.Background(), `create temporary table foo(a int4)`)
+		_, err := conn.Exec(ctx, `create temporary table foo(a int4)`)
 		require.NoError(t, err)
 
 		inputRows := [][]any{
@@ -434,7 +461,7 @@ func TestTraceCopyFrom(t *testing.T) {
 			{nil},
 		}
 
-		copyCount, err := conn.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a"}, pgx.CopyFromRows(inputRows))
+		copyCount, err := conn.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a"}, pgx.CopyFromRows(inputRows))
 		require.NoError(t, err)
 		require.EqualValues(t, len(inputRows), copyCount)
 		require.True(t, traceCopyFromStartCalled)
@@ -454,13 +481,16 @@ func TestTracePrepare(t *testing.T) {
 		return config
 	}
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, ctr, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		tracePrepareStartCalled := false
 		tracer.tracePrepareStart = func(ctx context.Context, conn *pgx.Conn, data pgx.TracePrepareStartData) context.Context {
 			tracePrepareStartCalled = true
 			require.Equal(t, `ps`, data.Name)
 			require.Equal(t, `select $1::text`, data.SQL)
-			return context.WithValue(ctx, "fromTracePrepareStart", "foo")
+			return context.WithValue(ctx, ctxKey("fromTracePrepareStart"), "foo")
 		}
 
 		tracePrepareEndCalled := false
@@ -502,7 +532,7 @@ func TestTraceConnect(t *testing.T) {
 	tracer.traceConnectStart = func(ctx context.Context, data pgx.TraceConnectStartData) context.Context {
 		traceConnectStartCalled = true
 		require.NotNil(t, data.ConnConfig)
-		return context.WithValue(ctx, "fromTraceConnectStart", "foo")
+		return context.WithValue(ctx, ctxKey("fromTraceConnectStart"), "foo")
 	}
 
 	traceConnectEndCalled := false

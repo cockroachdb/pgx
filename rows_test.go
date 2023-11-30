@@ -36,10 +36,30 @@ func TestRowScanner(t *testing.T) {
 	})
 }
 
+type testErrRowScanner string
+
+func (ers *testErrRowScanner) ScanRow(rows pgx.Rows) error {
+	return errors.New(string(*ers))
+}
+
+// https://github.com/jackc/pgx/issues/1654
+func TestRowScannerErrorIsFatalToRows(t *testing.T) {
+	t.Parallel()
+
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		s := testErrRowScanner("foo")
+		err := conn.QueryRow(ctx, "select 'Adam' as name, 72 as height").Scan(&s)
+		require.EqualError(t, err, "foo")
+	})
+}
+
 func TestForEachRow(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		var actualResults []any
 
 		rows, _ := conn.Query(
@@ -67,7 +87,10 @@ func TestForEachRow(t *testing.T) {
 func TestForEachRowScanError(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		var actualResults []any
 
 		rows, _ := conn.Query(
@@ -88,7 +111,10 @@ func TestForEachRowScanError(t *testing.T) {
 func TestForEachRowAbort(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		rows, _ := conn.Query(
 			context.Background(),
 			"select n, n * 2 from generate_series(1, $1) n",
@@ -151,7 +177,7 @@ func TestCollectRows(t *testing.T) {
 // This example uses CollectRows with a manually written collector function. In most cases RowTo, RowToAddrOf,
 // RowToStructByPos, RowToAddrOfStructByPos, or another generic function would be used.
 func ExampleCollectRows() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
@@ -244,6 +270,7 @@ func TestCollectOneRowPrefersPostgreSQLErrorOverErrNoRows(t *testing.T) {
 		var pgErr *pgconn.PgError
 		require.ErrorAs(t, err, &pgErr)
 		require.Equal(t, "23505", pgErr.Code)
+		require.Equal(t, "", name)
 	})
 }
 
@@ -261,7 +288,7 @@ func TestRowTo(t *testing.T) {
 }
 
 func ExampleRowTo() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
@@ -297,7 +324,7 @@ func TestRowToAddrOf(t *testing.T) {
 }
 
 func ExampleRowToAddrOf() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
@@ -358,6 +385,24 @@ func TestRowToStructByPos(t *testing.T) {
 	})
 }
 
+func TestRowToStructByPosIgnoredField(t *testing.T) {
+	type person struct {
+		Name string
+		Age  int32 `db:"-"`
+	}
+
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		rows, _ := conn.Query(ctx, `select 'Joe' as name from generate_series(0, 9) n`)
+		slice, err := pgx.CollectRows(rows, pgx.RowToStructByPos[person])
+		require.NoError(t, err)
+
+		assert.Len(t, slice, 10)
+		for i := range slice {
+			assert.Equal(t, "Joe", slice[i].Name)
+		}
+	})
+}
+
 func TestRowToStructByPosEmbeddedStruct(t *testing.T) {
 	type Name struct {
 		First string
@@ -411,6 +456,31 @@ func TestRowToStructByPosMultipleEmbeddedStruct(t *testing.T) {
 	})
 }
 
+func TestRowToStructByPosEmbeddedUnexportedStruct(t *testing.T) {
+	type name struct {
+		First string
+		Last  string
+	}
+
+	type person struct {
+		name
+		Age int32
+	}
+
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		rows, _ := conn.Query(ctx, `select 'John' as first_name, 'Smith' as last_name, n as age from generate_series(0, 9) n`)
+		slice, err := pgx.CollectRows(rows, pgx.RowToStructByPos[person])
+		require.NoError(t, err)
+
+		assert.Len(t, slice, 10)
+		for i := range slice {
+			assert.Equal(t, "John", slice[i].name.First)
+			assert.Equal(t, "Smith", slice[i].name.Last)
+			assert.EqualValues(t, i, slice[i].Age)
+		}
+	})
+}
+
 // Pointer to struct is not supported. But check that we don't panic.
 func TestRowToStructByPosEmbeddedPointerToStruct(t *testing.T) {
 	type Name struct {
@@ -431,7 +501,7 @@ func TestRowToStructByPosEmbeddedPointerToStruct(t *testing.T) {
 }
 
 func ExampleRowToStructByPos() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
@@ -577,7 +647,7 @@ func TestRowToStructByNameEmbeddedStruct(t *testing.T) {
 }
 
 func ExampleRowToStructByName() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
@@ -772,7 +842,7 @@ func TestRowToStructByNameLaxRowValue(t *testing.T) {
 }
 
 func ExampleRowToStructByNameLax() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))

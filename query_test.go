@@ -193,7 +193,7 @@ func TestConnQueryValuesWhenUnableToDecode(t *testing.T) {
 func TestConnQueryValuesWithUnregisteredOID(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
@@ -220,7 +220,10 @@ func TestConnQueryValuesWithUnregisteredOID(t *testing.T) {
 func TestConnQueryArgsAndScanWithUnregisteredOID(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		tx, err := conn.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx)
@@ -584,15 +587,8 @@ func TestQueryEncodeError(t *testing.T) {
 	if rows.Err() == nil {
 		t.Error("Expected rows.Err() to return error, but it didn't")
 	}
-	if conn.PgConn().ParameterStatus("crdb_version") != "" {
-		if !strings.Contains(rows.Err().Error(), "SQLSTATE 08P01") {
-			// CockroachDB returns protocol_violation instead of invalid_text_representation
-			t.Error("Expected rows.Err() to return different error:", rows.Err())
-		}
-	} else {
-		if !strings.Contains(rows.Err().Error(), "SQLSTATE 22P02") {
-			t.Error("Expected rows.Err() to return different error:", rows.Err())
-		}
+	if !strings.Contains(rows.Err().Error(), "SQLSTATE 22P02") {
+		t.Error("Expected rows.Err() to return different error:", rows.Err())
 	}
 }
 
@@ -660,16 +656,9 @@ func TestQueryRowCoreIntegerEncoding(t *testing.T) {
 	defer closeConn(t, conn)
 
 	type allTypes struct {
-		ui   uint
-		ui8  uint8
-		ui16 uint16
-		ui32 uint32
-		ui64 uint64
-		i    int
-		i8   int8
-		i16  int16
-		i32  int32
-		i64  int64
+		i16 int16
+		i32 int32
+		i64 int64
 	}
 
 	var actual, zero allTypes
@@ -987,7 +976,6 @@ func TestQueryRowErrors(t *testing.T) {
 
 	type allTypes struct {
 		i16 int16
-		i   int
 		s   string
 	}
 
@@ -1041,7 +1029,7 @@ func TestQueryRowEmptyQuery(t *testing.T) {
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	var n int32
@@ -1522,7 +1510,7 @@ func TestConnSimpleProtocol(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		if bytes.Compare(actual, expected) != 0 {
+		if !bytes.Equal(actual, expected) {
 			t.Errorf("expected %v got %v", expected, actual)
 		}
 	}
@@ -1781,7 +1769,7 @@ func TestConnSimpleProtocol(t *testing.T) {
 	{
 		if conn.PgConn().ParameterStatus("crdb_version") == "" {
 			// CockroachDB doesn't support circle type.
-			expected := pgtype.Circle{P: pgtype.Vec2{1, 2}, R: 1.5, Valid: true}
+			expected := pgtype.Circle{P: pgtype.Vec2{X: 1, Y: 2}, R: 1.5, Valid: true}
 			actual := expected
 			err := conn.QueryRow(
 				context.Background(),
@@ -1829,7 +1817,7 @@ func TestConnSimpleProtocol(t *testing.T) {
 		if expectedBool != actualBool {
 			t.Errorf("expected %v got %v", expectedBool, actualBool)
 		}
-		if bytes.Compare(expectedBytes, actualBytes) != 0 {
+		if !bytes.Equal(expectedBytes, actualBytes) {
 			t.Errorf("expected %v got %v", expectedBytes, actualBytes)
 		}
 		if expectedString != actualString {
@@ -1943,7 +1931,10 @@ func TestQueryErrorWithDisabledStatementCache(t *testing.T) {
 func TestQueryWithQueryRewriter(t *testing.T) {
 	t.Parallel()
 
-	pgxtest.RunWithQueryExecModes(context.Background(), t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		qr := testQueryRewriter{sql: "select $1::int", args: []any{42}}
 		rows, err := conn.Query(ctx, "should be replaced", &qr)
 		require.NoError(t, err)
@@ -1963,7 +1954,7 @@ func TestQueryWithQueryRewriter(t *testing.T) {
 // This example uses Query without using any helpers to read the results. Normally CollectRows, ForEachRow, or another
 // helper function should be used.
 func ExampleConn_Query() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))

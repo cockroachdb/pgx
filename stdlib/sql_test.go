@@ -5,11 +5,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"reflect"
 	"regexp"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -317,6 +319,93 @@ func TestConnQuery(t *testing.T) {
 	})
 }
 
+func TestConnConcurrency(t *testing.T) {
+	testWithAllQueryExecModes(t, func(t *testing.T, db *sql.DB) {
+		_, err := db.Exec("create table t (id integer primary key, str text, dur_str interval)")
+		require.NoError(t, err)
+
+		defer func() {
+			_, err := db.Exec("drop table t")
+			require.NoError(t, err)
+		}()
+
+		var wg sync.WaitGroup
+
+		concurrency := 50
+		errChan := make(chan error, concurrency)
+
+		for i := 1; i <= concurrency; i++ {
+			wg.Add(1)
+
+			go func(idx int) {
+				defer wg.Done()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+				defer cancel()
+
+				str := strconv.Itoa(idx)
+				duration := time.Duration(idx) * time.Second
+				_, err := db.ExecContext(ctx, "insert into t values($1)", idx)
+				if err != nil {
+					errChan <- fmt.Errorf("insert failed: %d %w", idx, err)
+					return
+				}
+				_, err = db.ExecContext(ctx, "update t set str = $1 where id = $2", str, idx)
+				if err != nil {
+					errChan <- fmt.Errorf("update 1 failed: %d %w", idx, err)
+					return
+				}
+				_, err = db.ExecContext(ctx, "update t set dur_str = $1 where id = $2", duration, idx)
+				if err != nil {
+					errChan <- fmt.Errorf("update 2 failed: %d %w", idx, err)
+					return
+				}
+
+				errChan <- nil
+			}(i)
+		}
+		wg.Wait()
+		for i := 1; i <= concurrency; i++ {
+			err := <-errChan
+			require.NoError(t, err)
+		}
+
+		for i := 1; i <= concurrency; i++ {
+			wg.Add(1)
+
+			go func(idx int) {
+				defer wg.Done()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+				defer cancel()
+
+				var id int
+				var str string
+				var duration pgtype.Interval
+				err := db.QueryRowContext(ctx, "select id,str,dur_str from t where id = $1", idx).Scan(&id, &str, &duration)
+				if err != nil {
+					errChan <- fmt.Errorf("select failed: %d %w", idx, err)
+					return
+				}
+				require.Equal(t, idx, id)
+				require.Equal(t, strconv.Itoa(idx), str)
+				expectedDuration := pgtype.Interval{
+					Microseconds: int64(idx) * time.Second.Microseconds(),
+					Valid:        true,
+				}
+				require.Equal(t, expectedDuration, duration)
+
+				errChan <- nil
+			}(i)
+		}
+		wg.Wait()
+		for i := 1; i <= concurrency; i++ {
+			err := <-errChan
+			require.NoError(t, err)
+		}
+	})
+}
+
 // https://github.com/jackc/pgx/issues/781
 func TestConnQueryDifferentScanPlansIssue781(t *testing.T) {
 	testWithAllQueryExecModes(t, func(t *testing.T, db *sql.DB) {
@@ -484,7 +573,7 @@ func TestConnQueryJSONIntoByteSlice(t *testing.T) {
 			t.Errorf("Unexpected failure: %v (sql -> %v)", err, sql)
 		}
 
-		if bytes.Compare(actual, expected) != 0 {
+		if !bytes.Equal(actual, expected) {
 			t.Errorf(`Expected "%v", got "%v" (sql -> %v)`, string(expected), string(actual), sql)
 		}
 
@@ -516,7 +605,7 @@ func TestConnExecInsertByteSliceIntoJSON(t *testing.T) {
 	err = db.QueryRow(`select body from docs`).Scan(&actual)
 	require.NoError(t, err)
 
-	if bytes.Compare(actual, expected) != 0 {
+	if !bytes.Equal(actual, expected) {
 		t.Errorf(`Expected "%v", got "%v"`, string(expected), string(actual))
 	}
 

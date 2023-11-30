@@ -117,7 +117,9 @@ func Connect(ctx context.Context, connString string) (*PgConn, error) {
 // Connect establishes a connection to a PostgreSQL server using the environment and connString (in URL or DSN format)
 // and ParseConfigOptions to provide additional configuration. See documentation for [ParseConfig] for details. ctx can be
 // used to cancel a connect attempt.
-func ConnectWithOptions(ctx context.Context, connString string, parseConfigOptions ParseConfigOptions) (*PgConn, error) {
+func ConnectWithOptions(
+	ctx context.Context, connString string, parseConfigOptions ParseConfigOptions,
+) (*PgConn, error) {
 	config, err := ParseConfigWithOptions(connString, parseConfigOptions)
 	if err != nil {
 		return nil, err
@@ -204,7 +206,7 @@ func ConnectConfig(octx context.Context, config *Config) (pgConn *PgConn, err er
 	}
 
 	if err != nil {
-		return nil, err // no need to wrap in connectError because it will already be wrapped in all cases except PgError
+		return nil, err // no need to wrap in ConnectError because it will already be wrapped in all cases except PgError
 	}
 
 	if config.AfterConnect != nil {
@@ -218,7 +220,9 @@ func ConnectConfig(octx context.Context, config *Config) (pgConn *PgConn, err er
 	return pgConn, nil
 }
 
-func expandWithIPs(ctx context.Context, lookupFn LookupFunc, fallbacks []*FallbackConfig) ([]*FallbackConfig, error) {
+func expandWithIPs(
+	ctx context.Context, lookupFn LookupFunc, fallbacks []*FallbackConfig,
+) ([]*FallbackConfig, error) {
 	var configs []*FallbackConfig
 
 	var lookupErrors []error
@@ -275,25 +279,22 @@ func expandWithIPs(ctx context.Context, lookupFn LookupFunc, fallbacks []*Fallba
 // ConnectPassthrough connects directly to a user assuming the clientConn will pass
 // all the correct connection strings.
 func ConnectPassthrough(
-	ctx context.Context,
-	config *Config,
-	serverTLSConfig *tls.Config,
-	clientConn net.Conn,
+	ctx context.Context, config *Config, serverTLSConfig *tls.Config, clientConn net.Conn,
 ) (pgConn *PgConn, startupMessage *pgproto3.StartupMessage, retConn net.Conn, err error) {
 	// TODO(#migrations): fallback configs?
 	pgConn, startupMessage, clientConn, err = connectPassthrough(ctx, config, serverTLSConfig, clientConn)
 	if pgerr, ok := err.(*PgError); ok {
-		err = &connectError{config: config, msg: "server error", err: pgerr}
+		err = &ConnectError{Config: config, msg: "server error", err: pgerr}
 	}
 	if err != nil {
-		return nil, startupMessage, clientConn, err // no need to wrap in connectError because it will already be wrapped in all cases except PgError
+		return nil, startupMessage, clientConn, err // no need to wrap in ConnectError because it will already be wrapped in all cases except PgError
 	}
 
 	if config.AfterConnect != nil {
 		err := config.AfterConnect(ctx, pgConn)
 		if err != nil {
 			pgConn.conn.Close()
-			return nil, startupMessage, clientConn, &connectError{config: config, msg: "AfterConnect error", err: err}
+			return nil, startupMessage, clientConn, &ConnectError{Config: config, msg: "AfterConnect error", err: err}
 		}
 	}
 
@@ -313,8 +314,7 @@ func (*CancelStartupError) Error() string {
 // initClientConn reads the start message from the frontend, returning an established
 // client conn (potentially with SSL as well as the startup message).
 func initClientConn(
-	serverTLSConfig *tls.Config,
-	clientConn net.Conn,
+	serverTLSConfig *tls.Config, clientConn net.Conn,
 ) (*pgproto3.StartupMessage, net.Conn, error) {
 	// Read the startup message from the frontend.
 	fe := pgproto3.NewBackend(clientConn, clientConn)
@@ -366,18 +366,20 @@ func makeFallbackConfigs(ctx context.Context, config *Config) ([]*FallbackConfig
 	fallbackConfigs = append(fallbackConfigs, config.Fallbacks...)
 	fallbackConfigs, err = expandWithIPs(ctx, config.LookupFunc, fallbackConfigs)
 	if err != nil {
-		return nil, &connectError{config: config, msg: "hostname resolving error", err: err}
+		return nil, &ConnectError{Config: config, msg: "hostname resolving error", err: err}
 	}
 
 	if len(fallbackConfigs) == 0 {
-		return nil, &connectError{config: config, msg: "hostname resolving error", err: errors.New("ip addr wasn't found")}
+		return nil, &ConnectError{Config: config, msg: "hostname resolving error", err: errors.New("ip addr wasn't found")}
 	}
 	return fallbackConfigs, nil
 }
 
 // initPassthroughConn attempts to initiate a connection using the fallbackConfig.
 // This matches the first few lines of `connect`.
-func initPassthroughConn(ctx context.Context, config *Config, fallbackConfig *FallbackConfig) (*PgConn, error) {
+func initPassthroughConn(
+	ctx context.Context, config *Config, fallbackConfig *FallbackConfig,
+) (*PgConn, error) {
 	pgConn := new(PgConn)
 	pgConn.config = config
 	pgConn.cleanupDone = make(chan struct{})
@@ -386,7 +388,7 @@ func initPassthroughConn(ctx context.Context, config *Config, fallbackConfig *Fa
 	network, address := NetworkAddress(fallbackConfig.Host, fallbackConfig.Port)
 	netConn, err := config.DialFunc(ctx, network, address)
 	if err != nil {
-		return nil, &connectError{config: config, msg: "dial error", err: normalizeTimeoutError(ctx, err)}
+		return nil, &ConnectError{Config: config, msg: "dial error", err: normalizeTimeoutError(ctx, err)}
 	}
 
 	pgConn.conn = netConn
@@ -398,7 +400,7 @@ func initPassthroughConn(ctx context.Context, config *Config, fallbackConfig *Fa
 		pgConn.contextWatcher.Unwatch() // Always unwatch `netConn` after TLS.
 		if err != nil {
 			netConn.Close()
-			return nil, &connectError{config: config, msg: "tls error", err: err}
+			return nil, &ConnectError{Config: config, msg: "tls error", err: err}
 		}
 
 		pgConn.conn = nbTLSConn
@@ -418,10 +420,7 @@ func initPassthroughConn(ctx context.Context, config *Config, fallbackConfig *Fa
 }
 
 func connectPassthrough(
-	ctx context.Context,
-	config *Config,
-	serverTLSConfig *tls.Config,
-	clientConn net.Conn,
+	ctx context.Context, config *Config, serverTLSConfig *tls.Config, clientConn net.Conn,
 ) (*PgConn, *pgproto3.StartupMessage, net.Conn, error) {
 	// We must first establish the SSL handshake between client <-> proxy and
 	// proxy <-> server. We cannot re-use the same SSL certs here as the
@@ -463,7 +462,7 @@ func connectPassthrough(
 		// Send the initial client message.
 		pgConn.frontend.Send(clientStartMsg)
 		if err := pgConn.frontend.Flush(); err != nil {
-			return &connectError{config: config, msg: "failed to receive message", err: err}
+			return &ConnectError{Config: config, msg: "failed to receive message", err: err}
 		}
 
 		// Now we can loop receiving auth packets until we succeed.
@@ -495,15 +494,15 @@ func connectPassthrough(
 					})
 					// Flush everything and return the error using best effort.
 					if err := clientFrontend.Flush(); err != nil {
-						return &connectError{
-							config: config,
+						return &ConnectError{
+							Config: config,
 							msg:    fmt.Sprintf("failed to flush fatal error: %s", err.Error()),
 							err:    pgErr,
 						}
 					}
-					return &connectError{config: config, msg: "fatal pg error", err: pgErr}
+					return &ConnectError{Config: config, msg: "fatal pg error", err: pgErr}
 				}
-				return &connectError{config: config, msg: "failed to receive message", err: err}
+				return &ConnectError{Config: config, msg: "failed to receive message", err: err}
 			}
 			clientFrontend.Send(msg)
 
@@ -519,7 +518,7 @@ func connectPassthrough(
 				*pgproto3.AuthenticationMD5Password,
 				*pgproto3.AuthenticationSASL, *pgproto3.AuthenticationSASLContinue:
 				if err := clientFrontend.Flush(); err != nil {
-					return &connectError{config: config, msg: fmt.Sprintf("failed to flush %T message", msg), err: err}
+					return &ConnectError{Config: config, msg: fmt.Sprintf("failed to flush %T message", msg), err: err}
 				}
 
 				// Set the correct auth type to any message received is decoded correctly.
@@ -536,11 +535,11 @@ func connectPassthrough(
 				// Wait for password from the user.
 				clientMsg, err := clientFrontend.Receive()
 				if err != nil {
-					return &connectError{config: config, msg: fmt.Sprintf("failed to receive %T response", msg), err: err}
+					return &ConnectError{Config: config, msg: fmt.Sprintf("failed to receive %T response", msg), err: err}
 				}
 				pgConn.frontend.Send(clientMsg)
 				if err := pgConn.frontend.Flush(); err != nil {
-					return &connectError{config: config, msg: fmt.Sprintf("failed to flush %T response to %T", clientMsg, msg), err: err}
+					return &ConnectError{Config: config, msg: fmt.Sprintf("failed to flush %T response to %T", clientMsg, msg), err: err}
 				}
 			case *pgproto3.AuthenticationSASLFinal:
 				// Expect more packets after this.
@@ -551,7 +550,7 @@ func connectPassthrough(
 				// config.ValidateConnect was deleted here.
 				// This is for "read only" pgx connections, which is not supported by the proxy.
 				if err := clientFrontend.Flush(); err != nil {
-					return &connectError{config: config, msg: "failed to flush ready for query", err: err}
+					return &ConnectError{Config: config, msg: "failed to flush ready for query", err: err}
 				}
 				return nil
 			case *pgproto3.ParameterStatus, *pgproto3.NoticeResponse:
@@ -559,11 +558,11 @@ func connectPassthrough(
 			case *pgproto3.ErrorResponse:
 				// Flush everything and return the error.
 				if err := clientFrontend.Flush(); err != nil {
-					return &connectError{config: config, msg: "failed to flush error response", err: err}
+					return &ConnectError{Config: config, msg: "failed to flush error response", err: err}
 				}
 				return ErrorResponseToPgError(msg)
 			default:
-				return &connectError{config: config, msg: "received unexpected message", err: err}
+				return &ConnectError{Config: config, msg: "received unexpected message", err: err}
 			}
 		}
 	}(); err != nil {
@@ -573,8 +572,8 @@ func connectPassthrough(
 	return pgConn, clientStartMsg, clientConn, nil
 }
 
-func connect(ctx context.Context, config *Config, fallbackConfig *FallbackConfig,
-	ignoreNotPreferredErr bool,
+func connect(
+	ctx context.Context, config *Config, fallbackConfig *FallbackConfig, ignoreNotPreferredErr bool,
 ) (*PgConn, error) {
 	pgConn := new(PgConn)
 	pgConn.config = config
@@ -1092,7 +1091,9 @@ type FieldDescription struct {
 	Format               int16
 }
 
-func (pgConn *PgConn) convertRowDescription(dst []FieldDescription, rd *pgproto3.RowDescription) []FieldDescription {
+func (pgConn *PgConn) convertRowDescription(
+	dst []FieldDescription, rd *pgproto3.RowDescription,
+) []FieldDescription {
 	if cap(dst) >= len(rd.Fields) {
 		dst = dst[:len(rd.Fields):len(rd.Fields)]
 	} else {
@@ -1124,7 +1125,9 @@ type StatementDescription struct {
 //
 // Prepare does not send a PREPARE statement to the server. It uses the PostgreSQL Parse and Describe protocol messages
 // directly.
-func (pgConn *PgConn) Prepare(ctx context.Context, name, sql string, paramOIDs []uint32) (*StatementDescription, error) {
+func (pgConn *PgConn) Prepare(
+	ctx context.Context, name, sql string, paramOIDs []uint32,
+) (*StatementDescription, error) {
 	if err := pgConn.lock(); err != nil {
 		return nil, err
 	}
@@ -1408,7 +1411,14 @@ func (pgConn *PgConn) Exec(ctx context.Context, sql string) *MultiResultReader {
 // binary format. If resultFormats is nil all results will be in text format.
 //
 // ResultReader must be closed before PgConn can be used again.
-func (pgConn *PgConn) ExecParams(ctx context.Context, sql string, paramValues [][]byte, paramOIDs []uint32, paramFormats []int16, resultFormats []int16) *ResultReader {
+func (pgConn *PgConn) ExecParams(
+	ctx context.Context,
+	sql string,
+	paramValues [][]byte,
+	paramOIDs []uint32,
+	paramFormats []int16,
+	resultFormats []int16,
+) *ResultReader {
 	result := pgConn.execExtendedPrefix(ctx, paramValues)
 	if result.closed {
 		return result
@@ -1434,7 +1444,13 @@ func (pgConn *PgConn) ExecParams(ctx context.Context, sql string, paramValues []
 // binary format. If resultFormats is nil all results will be in text format.
 //
 // ResultReader must be closed before PgConn can be used again.
-func (pgConn *PgConn) ExecPrepared(ctx context.Context, stmtName string, paramValues [][]byte, paramFormats []int16, resultFormats []int16) *ResultReader {
+func (pgConn *PgConn) ExecPrepared(
+	ctx context.Context,
+	stmtName string,
+	paramValues [][]byte,
+	paramFormats []int16,
+	resultFormats []int16,
+) *ResultReader {
 	result := pgConn.execExtendedPrefix(ctx, paramValues)
 	if result.closed {
 		return result
@@ -1979,7 +1995,9 @@ type Batch struct {
 }
 
 // ExecParams appends an ExecParams command to the batch. See PgConn.ExecParams for parameter descriptions.
-func (batch *Batch) ExecParams(sql string, paramValues [][]byte, paramOIDs []uint32, paramFormats []int16, resultFormats []int16) {
+func (batch *Batch) ExecParams(
+	sql string, paramValues [][]byte, paramOIDs []uint32, paramFormats []int16, resultFormats []int16,
+) {
 	if batch.err != nil {
 		return
 	}
@@ -1992,7 +2010,9 @@ func (batch *Batch) ExecParams(sql string, paramValues [][]byte, paramOIDs []uin
 }
 
 // ExecPrepared appends an ExecPrepared e command to the batch. See PgConn.ExecPrepared for parameter descriptions.
-func (batch *Batch) ExecPrepared(stmtName string, paramValues [][]byte, paramFormats []int16, resultFormats []int16) {
+func (batch *Batch) ExecPrepared(
+	stmtName string, paramValues [][]byte, paramFormats []int16, resultFormats []int16,
+) {
 	if batch.err != nil {
 		return
 	}
@@ -2339,7 +2359,9 @@ func (p *Pipeline) SendDeallocate(name string) {
 }
 
 // SendQueryParams is the pipeline version of *PgConn.QueryParams.
-func (p *Pipeline) SendQueryParams(sql string, paramValues [][]byte, paramOIDs []uint32, paramFormats []int16, resultFormats []int16) {
+func (p *Pipeline) SendQueryParams(
+	sql string, paramValues [][]byte, paramOIDs []uint32, paramFormats []int16, resultFormats []int16,
+) {
 	if p.closed {
 		return
 	}
@@ -2352,7 +2374,9 @@ func (p *Pipeline) SendQueryParams(sql string, paramValues [][]byte, paramOIDs [
 }
 
 // SendQueryPrepared is the pipeline version of *PgConn.QueryPrepared.
-func (p *Pipeline) SendQueryPrepared(stmtName string, paramValues [][]byte, paramFormats []int16, resultFormats []int16) {
+func (p *Pipeline) SendQueryPrepared(
+	stmtName string, paramValues [][]byte, paramFormats []int16, resultFormats []int16,
+) {
 	if p.closed {
 		return
 	}
